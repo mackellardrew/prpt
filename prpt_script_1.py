@@ -77,10 +77,10 @@ def recognize_sample_names(file_list: list, logger: logging.Logger):
     if len(sample_names) == 0:
         file_list_str = '\n'.join(file_list)
         file_list_msg = (
-            f"Error: could not identify sample names from the following "
+            "Error: could not identify sample names from the following "
             f"files in {INDIR}: {file_list_msg}"
-            "\n"
-            "Please check dir path and ensure .fastq or .fq files are present."
+            "\nPlease check dir path and ensure .fastq or .fq "
+            "files are present."
         )
         logger.error(file_list_msg)
         sys.exit()
@@ -190,12 +190,15 @@ def docker_create(
     return container
 
 
-def run_docker(instructions, redirect=False, stop_remove=True):
+def run_docker(
+    instructions, logger: logging.Logger, redirect=False, stop_remove=True
+    ):
     """Run a container based on input dict of cmds, then stop and remove container."""
     container = docker_create(
         instructions.get("image"),
         volumes=instructions.get("volumes"),
         name=instructions.get("name"),
+        logger=logger,
     )
     container.start()
     outputs = {}
@@ -1100,14 +1103,16 @@ def main():
     9. Detect AMR & Virulence Alleles: docker_exec() on 
         'staphb/abricate:latest', abricate_dfs(), combined_abr_df()
     10. Summarize & Report: ar_report_stats() to get Q30 & other metrics"""
-    indir_filepaths = [os.path.join(INDIR, file) for file in os.listdir(INDIR)]
-    sample_names = recognize_sample_names(indir_filepaths)
-    read_pairs = get_read_pairs(indir_filepaths, sample_names, "raw")
-
     OUTDIR.mkdir(exist_ok=True)
     os.chdir(OUTDIR)
-    volumes = map_docker_dirs(INDIR, OUTDIR)
     prpt_logger = setup_logger()
+    indir_filepaths = [os.path.join(INDIR, file) for file in os.listdir(INDIR)]
+    sample_names = recognize_sample_names(indir_filepaths, prpt_logger)
+    read_pairs = get_read_pairs(
+        indir_filepaths, sample_names, "raw", prpt_logger
+    )
+
+    volumes = map_docker_dirs(INDIR, OUTDIR)
     mapped_read_pairs = map_read_pairs(read_pairs, volumes, "raw")
 
     raw_fastqc_cmds = prep_fastqc(mapped_read_pairs, volumes, "raw")
@@ -1126,9 +1131,9 @@ def main():
     ]:
         for step, instructions in prepped_dict.items():
             if step == "mash_dist_inputs":
-                run_docker(instructions, redirect=True)
+                run_docker(instructions, prpt_logger, redirect=True)
             else:
-                result = run_docker(instructions)
+                result = run_docker(instructions, prpt_logger)
                 results[step] = result
 
     # Part 2: determine best reference genomes and download
@@ -1150,7 +1155,9 @@ def main():
     trimmed_dir = os.path.join(OUTDIR, "trimmed_reads")
     container_trimmed_dir = os.path.join("/data", "trimmed_reads")
     trimmomatic_cmds = prep_trimmomatic(mapped_read_pairs, volumes)
-    results["trimmomatic_inputs"] = run_docker(trimmomatic_cmds["trimmomatic_inputs"])
+    results["trimmomatic_inputs"] = run_docker(
+        trimmomatic_cmds["trimmomatic_inputs"], prpt_logger
+    )
     trimmed_read_pairs = get_read_pairs(
         os.listdir(trimmed_dir), sample_names, "trimmed"
     )
