@@ -1,0 +1,53 @@
+{
+    // Use IntelliSense to learn about possible attributes.
+    // Hover to view descriptions of existing attributes.
+    // For more information, visit: https://go.microsoft.com/fwlink/?linkid=830387
+    "version": "0.2.0",
+    "configurations": [
+        {
+            "name": "prpt_test_1",
+            "type": "python",
+            "request": "launch",
+            "program": "/data/hai/prpt/prpt_script_1.py",
+            "console": "integratedTerminal",
+            "cwd": "/data/hai/prpt_test_1",
+            "args": [
+                "/data/hai/prpt_test_1/input_reads_1",
+                "/data/hai/snvphyl-galaxy-cli",
+                "--email",
+                "drew.mackellar@doh.wa.gov",
+            ]
+        },
+        {
+            "name": "prpt_test_2",
+            "type": "python",
+            "request": "launch",
+            "program": "/data/hai/prpt/prpt_script_1.py",
+            "console": "integratedTerminal",
+            "cwd": "/data/hai/prpt_test_1",
+            "args": [
+                "/data/hai/prpt_test_1/input_reads_2",
+                "/data/hai/snvphyl-galaxy-cli",
+                "--email",
+                "drew.mackellar@doh.wa.gov",
+
+            ]
+        },
+        {
+            "name": "prpt_test_skip_assemb",
+            "type": "python",
+            "request": "launch",
+            "program": "/data/hai/prpt/prpt_script_1.py",
+            "console": "integratedTerminal",
+            "cwd": "/data/hai/prpt_test_1",
+            "args": [
+                "/data/hai/prpt_test_1/input_reads_2",
+                "/data/hai/snvphyl-galaxy-cli",
+                "--email",
+                "drew.mackellar@doh.wa.gov",
+                "--assemblies_dir",
+                "/data/hai/prpt_test_1/20220614-0642_PRPT/chr_assemblies"
+            ]
+        },
+    ]
+}

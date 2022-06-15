@@ -2,14 +2,12 @@
 
 """A more nuanced second-pass to summarize approaches used in Pacific Rim 
 Proficiency Training exercise to characterize HAI/AR samples in Summer 2020. 
-All functions assume availability of IPython magic for easy access to shell, 
-as well as Docker engine, Python>=3.5, etc. To be made more coherent 
-and concise at a later date."""
+All functions assume availability of Docker engine, Python>=3.5, etc. To be made more coherent and concise at a later date."""
 
-import argparse
 import datetime
 import docker
 import gzip
+import logging
 import json
 import os
 import pandas as pd
@@ -22,69 +20,13 @@ from functools import partial
 from pathlib import Path, PurePath
 from zipfile import ZipFile
 
-# Handling inputs as a dir OR file of paths is too much trouble;
-# keep it dir-only for now.  Also, mount Docker volumes as
-# their native (local) paths; no more "/data" mappings.
-parser = argparse.ArgumentParser()
-parser.add_argument(
-    help=("Path to dir containing all input FastQ read files"),
-    type=Path,
-    dest="indir",
-)
-parser.add_argument(
-    help=("Path to dir containing the cloned SNVPhyl CLI repository"),
-    type=Path,
-    dest="snvdir",
-)
-parser.add_argument(
-    "-e",
-    "--email",
-    help="User email for authenticating to NCBI FTP site",
-    type=str,
-    dest="email",
-)
-parser.add_argument(
-    "-o",
-    "--outdir",
-    help="Directory to which to write the outputs",
-    type=Path,
-    dest="outdir",
-)
-parser.add_argument(
-    "-t",
-    "--threads",
-    help="Number of threads to use",
-    type=int,
-    default=1,
-    dest="nthreads",
-)
-parser.add_argument(
-    "-p",
-    "--phylo",
-    help=(
-        "Phylogenetic tree-building program to use: "
-        "one of either 'lyveset' or 'snvphyl'"
-    ),
-    type=str,
-    default="SNVPHYL",
-    dest="phylo",
-)
-parser.add_argument(
-    "-r",
-    "--reads",
-    help=(
-        "Reads to use in phylogenetic tree building: "
-        "one of either 'raw' or 'trimmed'"
-    ),
-    type=str,
-    default="TRIMMED",
-    dest="phylo_read_type",
-)
-
-user_args = parser.parse_args()
+from user_args import user_args
 
 INDIR = user_args.indir.resolve()
 SNVDIR = user_args.snvdir.resolve()
+
+if user_args.assemblies_dir:
+    ASSEMBLIESDIR = user_args.assemblies_dir.resolve(strict=True)
 
 if user_args.outdir:
     OUTDIR = user_args.outdir.resolve()
@@ -102,7 +44,23 @@ USER = str(os.getuid())
 GID = str(os.getgid())
 
 
-def recognize_sample_names(file_list):
+def setup_logger() -> logging.Logger:
+    """Returns a logger object writing to 'prpt_logs.txt'."""
+    log_filepath = os.path.join(OUTDIR, "prpt_logs.txt")
+    formatter = logging.Formatter(
+        fmt="%(asctime)s | %(levelname)s | %(message)s", datefmt="%Y-%m-%d %H:%M:%S"
+    )
+    logger = logging.getLogger("prpt_logger")
+    logger.setLevel(logging.INFO)
+    handler = logging.FileHandler(log_filepath)
+    handler.setFormatter(formatter)
+    logger.addHandler(handler)
+    logger.addHandler(logging.StreamHandler())
+
+    return logger
+
+
+def recognize_sample_names(file_list: list, logger: logging.Logger):
     illumina_pattern = re.compile(r"^(.*)_S[0-9]+_L[0-9]{3}_R[12]_001\..*$")
     simple_pattern = re.compile(r"^(.*)[rR][12].*$")
     sample_names = set()
@@ -116,11 +74,24 @@ def recognize_sample_names(file_list):
             elif simple_match:
                 sample_name = simple_match.groups()[0]
             sample_names.update([sample_name])
+    if len(sample_names) == 0:
+        file_list_str = '\n'.join(file_list)
+        file_list_msg = (
+            f"Error: could not identify sample names from the following "
+            f"files in {INDIR}: {file_list_msg}"
+            "\n"
+            "Please check dir path and ensure .fastq or .fq files are present."
+        )
+        logger.error(file_list_msg)
+        sys.exit()
 
     return list(sample_names)
 
 
-def get_read_pairs(filepath_list, samples, raw_or_trimmed, require_pairs=True):
+def get_read_pairs(
+    filepath_list: list, samples: set, raw_or_trimmed: str, 
+    logger: logging.Logger, require_pairs: bool = True, 
+    ):
     """Output dict of sample: list_of_paths for input
     samples list and in_dir."""
     read_pairs = {sample: [] for sample in samples}
@@ -144,7 +115,9 @@ def get_read_pairs(filepath_list, samples, raw_or_trimmed, require_pairs=True):
     return read_pairs
 
 
-def map_read_pairs(read_pairs, remapped, raw_or_trimmed):
+def map_read_pairs(read_pairs: dict, remapped: dict, raw_or_trimmed: str):
+    """Converts paths of input reads from their local dir tree into 
+    that expected by the container, given volume mount locations."""
     mapped_read_pairs = {sample: [] for sample in read_pairs}
     for sample, path_list in read_pairs.items():
         for filepath in path_list:
@@ -161,7 +134,9 @@ def map_read_pairs(read_pairs, remapped, raw_or_trimmed):
     return mapped_read_pairs
 
 
-def map_docker_dirs(indir, outdir):
+def map_docker_dirs(indir: Path, outdir: Path):
+    """Returns a dict mapping local dirs to their mounted 
+    container locations, to be passed to Docker SDK."""
     volumes = {
         indir: {"bind": "/inputs", "mode": "ro"},
         outdir: {"bind": "/data", "mode": "rw"},
@@ -169,22 +144,29 @@ def map_docker_dirs(indir, outdir):
     return volumes
 
 
-def docker_create(image, volumes, name=None, tty=True, overwrite=True, **kwargs):
+def docker_create(
+    image_name: str, volumes: dict, logger: logging.Logger, 
+    name=None, tty=True, overwrite=True, **kwargs
+    ):
     """Launch a new container image with Docker SDK.
     If overwrite=True and a container with the given name
     already exists; stop and remove it."""
     # Check that image is present
     images = CLIENT.images.list()
-    image_tags = [image.attrs.get("RepoTags") for image in images]
-    print(image)
-    if image not in image_tags:
-        repo, version = image.split(":")
+    local_img = CLIENT.images.get(image_name)
+    if not local_img:
+        repo, version = image_name.split(":")
+        image_missing_msg = (
+            f"Could not find local installation of image: '{repo}'; "
+            f"attempting to download version: '{version}' now."
+        )
+        logger.info(image_missing_msg)
         CLIENT.images.pull(repo, tag=version)
 
     create_func = partial(
         CLIENT.containers.create,
         group_add=GID,
-        image=image,
+        image=image_name,
         name=name,
         tty=tty,
         volumes=volumes,
@@ -196,6 +178,9 @@ def docker_create(image, volumes, name=None, tty=True, overwrite=True, **kwargs)
     except docker.errors.APIError:
         old_container = CLIENT.containers.get(name)
         if overwrite:
+            old_container_msg = (
+                f"Found running container: {old_container}"
+            )
             old_container.stop()
             old_container.remove(v=True, force=True)
             container = create_func()
@@ -1122,6 +1107,7 @@ def main():
     OUTDIR.mkdir(exist_ok=True)
     os.chdir(OUTDIR)
     volumes = map_docker_dirs(INDIR, OUTDIR)
+    prpt_logger = setup_logger()
     mapped_read_pairs = map_read_pairs(read_pairs, volumes, "raw")
 
     raw_fastqc_cmds = prep_fastqc(mapped_read_pairs, volumes, "raw")
@@ -1175,14 +1161,15 @@ def main():
     quast_cmds = prep_quast(sample_build_dict, OUTDIR, volumes)
     genome_qc_dir = os.path.join("/data", "chr_assemblies", "qc")
     quast_multiqc_cmds = prep_multiqc(genome_qc_dir, volumes)
-    for prepped_dict in [
+    prepped_dicts = [
         trim_fastqc_cmds,
         trim_multiqc_cmds,
-        spades_cmds,
         quast_cmds,
         quast_multiqc_cmds,
-    ]:
-
+    ]
+    if not ASSEMBLIESDIR:
+        prepped_dicts.insert(2, spades_cmds)
+    for prepped_dict in prepped_dicts:
         # Alternate for testing purposes; omit spades_cmds
         # test_assemblies_dir = "/dcm/data/prpt/tests/assemblies"
         # assemblies_dict = {
