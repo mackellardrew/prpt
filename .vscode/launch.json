@@ -37,7 +37,7 @@
             "name": "prpt_test_skip_assemb",
             "type": "python",
             "request": "launch",
-            "program": "/data/hai/prpt/prpt_script_1.py",
+            "program": "${workspaceRoot}/prpt_pipeline/prpt_script_1.py",
             "console": "integratedTerminal",
             "cwd": "/data/hai/prpt_test_1",
             "args": [
@@ -47,6 +47,52 @@
                 "drew.mackellar@doh.wa.gov",
                 "--assemblies_dir",
                 "/data/hai/prpt_test_1/20220614-0642_PRPT/chr_assemblies"
+            ]
+        },
+        {
+            "name": "2023_kp_test",
+            "type": "python",
+            "request": "launch",
+            "program": "${workspaceRoot}/prpt_pipeline/prpt_script_1.py",
+            "console": "integratedTerminal",
+            "cwd": "/data/hai/prpt_test_1",
+            "justMyCode": false,
+            "args": [
+                "/data/hai/2023_kp/20230507/reads",
+                "/data/hai/snvphyl-galaxy-cli",
+                "--email",
+                "drew.mackellar@doh.wa.gov",
+                "-o",
+                "/data/hai/2023_kp/20230507/prpt_script_outputs",
+                "-t",
+                "8",
+                "-p",
+                "snvphyl",
+                "-r",
+                "raw"
+            ]
+        },
+        {
+            "name": "2023_kp_test_2",
+            "type": "python",
+            "request": "launch",
+            "program": "${workspaceRoot}/prpt_pipeline/prpt_script_1.py",
+            "console": "integratedTerminal",
+            "cwd": "/data/hai/2023_kp/20230508/",
+            // "justMyCode": false,
+            "args": [
+                "/data/hai/2023_kp/20230508/reads",
+                "/data/hai/snvphyl-galaxy-cli",
+                "--email",
+                "drew.mackellar@doh.wa.gov",
+                "-o",
+                "/data/hai/2023_kp/20230508/prpt_script_outputs",
+                "-t",
+                "8",
+                "-p",
+                "snvphyl",
+                "-r",
+                "raw"
             ]
         },
     ]
