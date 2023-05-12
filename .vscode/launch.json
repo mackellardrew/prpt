@@ -86,13 +86,15 @@
                 "--email",
                 "drew.mackellar@doh.wa.gov",
                 "-o",
-                "/data/hai/2023_kp/20230508/prpt_script_outputs",
+                "/data/hai/2023_kp/20230512/prpt_script_outputs",
                 "-t",
                 "8",
                 "-p",
                 "snvphyl",
                 "-r",
-                "raw"
+                "trimmed",
+                "--assemblies_dir",
+                "/data/hai/2023_kp/20230508/prpt_script_outputs",
             ]
         },
     ]

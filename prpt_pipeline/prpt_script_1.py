@@ -62,6 +62,18 @@ def setup_logger() -> logging.Logger:
     return logger
 
 
+def handle_exception(exc_type, exc_value, exc_traceback):
+    if issubclass(exc_type, KeyboardInterrupt):
+        sys.__excepthook__(exc_type, exc_value, exc_traceback)
+        return
+
+    logger.critical(
+        "Uncaught exception", exc_info=(exc_type, exc_value, exc_traceback)
+    )
+
+    return None
+
+
 def recognize_sample_names(file_list: list, logger: logging.Logger):
     illumina_pattern = re.compile(r"^(.*)_S[0-9]+_L[0-9]{3}_R[12]_001\..*$")
     simple_pattern = re.compile(r"^(.*)[rR][12].*$")
@@ -175,12 +187,12 @@ def docker_create(
         user=USER,
         **kwargs,
     )
+    creating_container_msg = (
+        f"Attempting to start container {image_name}"
+    )
+    logger.info(creating_container_msg)
     try:
         container = create_func()
-        creating_container_msg = (
-            f"Attempting to start container {image_name}"
-        )
-        logger.info(creating_container_msg)
     except docker.errors.APIError as err:
         # container_err_msg = (
         #     f"Encountered error {err}"
@@ -886,7 +898,9 @@ def download_assemblies(
     return sample_build_dict
 
 
-def group_reads_by_species(sample_read_dict, read_pairs_dict=None):
+def group_reads_by_species(
+    sample_read_dict, logger: logging.Logger, read_pairs_dict=None
+):
     """Takes in sample_read_dict mapping species to reference files and samples
     and copies either trimmed or raw reads for samples into new, species-specific
     dir, to prepare them for use in SNP calling with SNVPhyl."""
@@ -894,7 +908,7 @@ def group_reads_by_species(sample_read_dict, read_pairs_dict=None):
     master_dict = {
         sample: d
         for sample, d in sample_read_dict.items()
-        if d.get("samples").shape[0] > 1
+        if d.get("samples").shape[0] > 0
     }
     if PHYLO_READ_TYPE == "raw":
         for species, d in master_dict.items():
@@ -1017,11 +1031,12 @@ def rename_reads_lyveset(read_pairs, rename_dir="renamed"):
 #     return outputs
 
 
-def run_snvphyl(snvphyl_dir, sample_build_dict):
+def run_snvphyl(snvphyl_dir, sample_build_dict, logger=logging.Logger):
     pipes = {"stdout": subprocess.PIPE, "stderr": subprocess.PIPE}
     Path(os.path.join(OUTDIR, "snvphyl")).mkdir(exist_ok=True)
     if PHYLO_READ_TYPE == "raw":
-        reads_dir = os.path.join(OUTDIR, "untrimmed_reads")
+        # reads_dir = os.path.join(OUTDIR, "untrimmed_reads")
+        reads_dir = INDIR
     elif PHYLO_READ_TYPE == "trimmed":
         reads_dir = os.path.join(OUTDIR, "trimmed_reads")
     snvphyl_ex = os.path.join(snvphyl_dir, "bin", "snvphyl.py")
@@ -1045,7 +1060,7 @@ def run_snvphyl(snvphyl_dir, sample_build_dict):
                 f"--min-coverage 5 --output-dir {output_dir}"
             )
         )
-        print(cmd)
+        logger.info(cmd)
         proc = subprocess.Popen(cmd, **pipes)
         stdout, stderr = proc.communicate()
         results_dict[species] = [std.decode("utf-8") for std in (stdout, stderr)]
@@ -1171,9 +1186,13 @@ def main():
     9. Detect AMR & Virulence Alleles: docker_exec() on 
         'staphb/abricate:latest', abricate_dfs(), combined_abr_df()
     10. Summarize & Report: ar_report_stats() to get Q30 & other metrics"""
-    OUTDIR.mkdir(exist_ok=True)
+    OUTDIR.mkdir(exist_ok=True, parents=True)
     os.chdir(OUTDIR)
     prpt_logger = setup_logger()
+    uncaught_exception_logger = partial(
+        handle_exception, logger=prpt_logger
+    )
+    sys.excepthook = uncaught_exception_logger
     indir_filepaths = [os.path.join(INDIR, file) for file in os.listdir(INDIR)]
     sample_names = recognize_sample_names(indir_filepaths, prpt_logger)
     read_pairs = get_read_pairs(
@@ -1236,6 +1255,11 @@ def main():
         )
 
     # Part 3: trim, repeat QC, assemble, and check assembly
+    part_3_msg = (
+        "Initiating third phase of pipeline: "
+        "read trimming, QC of trimmed reads, assembly, and QC of assembly."
+    )
+    prpt_logger.info(part_3_msg)
     trimmed_dir = os.path.join(OUTDIR, "trimmed_reads")
     container_trimmed_dir = os.path.join("/data", "trimmed_reads")
     trimmomatic_cmds = prep_trimmomatic(mapped_read_pairs, volumes)
@@ -1282,11 +1306,23 @@ def main():
             results[step] = result
 
     # Part 4: SNP analysis, and Abricate
-
-    group_reads_by_species(sample_build_dict, read_pairs_dict=read_pairs)
-    results["snvphyl"] = run_snvphyl(SNVDIR, sample_build_dict)
+    part_4_msg = (
+        "Initiating fourth phase of pipeline: "
+        "SNP analysis, and geneome annotation from Abricate."
+    )
+    prpt_logger.info(part_4_msg)
+    group_reads_by_species(
+        sample_build_dict, prpt_logger, read_pairs_dict=read_pairs
+    )
+    # snvphyl_msg = (
+    #     "Beginning SNVPhyl with options: "
+    #     " ".join()
+    # )
+    results["snvphyl"] = run_snvphyl(
+        SNVDIR, sample_build_dict, logger=prpt_logger
+    )
     abricate_cmds = prep_abricate(sample_names, volumes)
-    run_docker(abricate_cmds, redirect=True)
+    run_docker(abricate_cmds, logger=prpt_logger, redirect=True)
     abricate_dir = os.path.join(OUTDIR, "abricate")
     abricate_dfs_dict = get_abricate_dfs(sample_names, abricate_dir)
     abricate_dfs = combined_abr_df(abricate_dfs_dict)
@@ -1300,6 +1336,10 @@ def main():
 
     with open(os.path.join(OUTDIR, "results.json"), "w") as f:
         f.write(json.dumps(results, indent=4))
+    pipeline_complete_msg = (
+        "This pipeline ran to completion successfully."
+    )
+    prpt_logger.info(pipeline_complete_msg)
 
 
 if __name__ == "__main__":
