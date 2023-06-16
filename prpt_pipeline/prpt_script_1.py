@@ -460,8 +460,11 @@ def prep_quast(sample_build_dict, proj_dir, volumes):
         for dir_ in ("reference_genomes", "chr_assemblies")
     )
     for _, d in sample_build_dict.items():
-        ref_fasta = os.path.join(mounted_ref_dir, f"{d['build']}_genomic.fna")
-        ref_gff = os.path.join(mounted_ref_dir, f"{d['build']}_genomic.gff")
+        try:
+            ref_fasta = os.path.join(mounted_ref_dir, f"{d['build']}_genomic.fna")
+            ref_gff = os.path.join(mounted_ref_dir, f"{d['build']}_genomic.gff")
+        except KeyError:
+            continue
         for sample in d["samples"]:
             in_dir = os.path.join(mounted_assembly_dir, sample)
             # qc_dir = os.path.join(assembly_dir, "qc")
@@ -575,6 +578,7 @@ def format_species(species_str:str):
     import re
 
     # double-check species formatting
+    # search_str = r"^\s?([a-zA-Z]+)[\s_]([a-zA-Z]+).*$"
     search_str = r"^\s?([a-zA-Z]+)[\s_]([a-zA-Z]+).*$"
     groups = re.search(search_str, species_str).groups()
     species = "_".join(groups)
@@ -611,6 +615,9 @@ def get_assembly_summary(species, email, logger, outdir=None):
     ftp_url_base = "ftp.ncbi.nlm.nih.gov"
     credentials_dict = dict(user="anonymous", passwd=email)
     bacteria_prefix = "/genomes/refseq/bacteria/"
+    # Hacky worharound; fix later
+    if species == "Klebsiella_sp":
+        species = "Klebsiella_pneumoniae"
     species_dir = f"{bacteria_prefix}{species}/"
     target_file = "assembly_summary.txt"
     outpath = os.path.join(outdir, f"{species}_assembly_summary.txt")
@@ -680,7 +687,7 @@ def load_assembly_summaries(
         return df
 
     for species in species_list:
-        species = format_species(species)
+        # species = format_species(species)
         filename = f"{species}_assembly_summary.txt"
         filepath = os.path.join(indir, filename)
         if not os.path.isfile(filepath):
@@ -887,6 +894,9 @@ def download_assemblies(
     sample_build_dict = {species: dict() for species in assembly_ids_dict}
     for species, df in assembly_ids_dict.items():
         # if species_dfs[species].index.levels[0].shape[0] > 1:
+        # Weird; getting some empty dataframes here
+        if df.shape[0] == 0:
+            continue
         ftp_paths = df.loc[: n_assemblies - 1, "ftp_path"]
         ftp_paths.apply(
             get_ftp_files, ext=ext, logger=logger, outdir=ref_dir
@@ -1244,7 +1254,7 @@ def main():
             species, EMAIL, outdir=OUTDIR, logger=prpt_logger
         )
     assembly_dfs = load_assembly_summaries(OUTDIR, list(best_hits.keys()), EMAIL, prpt_logger)
-    assembly_dict = assemb_ids_from_mash(species_dfs, assembly_dfs)
+    assembly_dict = assemb_ids_from_mash(species_dfs, assembly_dfs,)
     exts = ["fna", "gff"]
     if PHYLO == "lyveset":
         exts.append("gbff")

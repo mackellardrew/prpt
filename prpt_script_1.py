@@ -1100,14 +1100,16 @@ def main():
     9. Detect AMR & Virulence Alleles: docker_exec() on 
         'staphb/abricate:latest', abricate_dfs(), combined_abr_df()
     10. Summarize & Report: ar_report_stats() to get Q30 & other metrics"""
-    indir_filepaths = [os.path.join(INDIR, file) for file in os.listdir(INDIR)]
-    sample_names = recognize_sample_names(indir_filepaths)
-    read_pairs = get_read_pairs(indir_filepaths, sample_names, "raw")
 
     OUTDIR.mkdir(exist_ok=True)
     os.chdir(OUTDIR)
     volumes = map_docker_dirs(INDIR, OUTDIR)
     prpt_logger = setup_logger()
+    indir_filepaths = [os.path.join(INDIR, file) for file in os.listdir(INDIR)]
+    sample_names = recognize_sample_names(indir_filepaths)
+    read_pairs = get_read_pairs(
+        indir_filepaths, sample_names, "raw", prpt_logger
+    )
     mapped_read_pairs = map_read_pairs(read_pairs, volumes, "raw")
 
     raw_fastqc_cmds = prep_fastqc(mapped_read_pairs, volumes, "raw")
@@ -1152,7 +1154,7 @@ def main():
     trimmomatic_cmds = prep_trimmomatic(mapped_read_pairs, volumes)
     results["trimmomatic_inputs"] = run_docker(trimmomatic_cmds["trimmomatic_inputs"])
     trimmed_read_pairs = get_read_pairs(
-        os.listdir(trimmed_dir), sample_names, "trimmed"
+        os.listdir(trimmed_dir), sample_names, "trimmed", prpt_logger
     )
     mapped_trimmed_read_pairs = map_read_pairs(trimmed_read_pairs, volumes, "trimmed")
     trim_fastqc_cmds = prep_fastqc(mapped_trimmed_read_pairs, volumes, "trimmed")
